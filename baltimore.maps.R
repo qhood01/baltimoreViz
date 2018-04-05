@@ -1,0 +1,169 @@
+require(ggmap)
+require(rgdal)
+require(rgeos)
+require(sp)
+require(RColorBrewer)
+require(pracma)
+key <- "AIzaSyDwxzQ5zFQsBC4G0geyB6HXF2jtAbZwTzk"
+register_google(key)
+
+bpd <- read.csv("~/Documents/data.gov/baltimore.arrests.csv")
+
+year <- substr(bpd$ArrestDate,7,10)
+month <- substr(bpd$ArrestDate,1,2)
+day <- substr(bpd$ArrestDate,4,5)
+bpd$yymm <- paste0(year,month)
+bpd$yymmdd <- paste0(year,month,day)
+
+dates <- sort(unique(bpd$yymm))
+
+setwd("~/Documents/Baltimore Geometries/Police_Districts/")
+bpd.districts <- readOGR(dsn=getwd(),layer="Police_Districts")
+
+setwd("~/Documents/Baltimore Geometries/Neighborhoods/")
+bpd.hoods <- readOGR(dsn=getwd(),layer="Neighborhoods")
+bpd.hoods <- spTransform(bpd.hoods,proj4string(bpd.districts))
+
+setwd("~/Documents/Baltimore Geometries/ZIP_Codes/")
+bpd.zips <- readOGR(dsn=getwd(),layer="ZIP_Codes")
+bpd.zips <- spTransform(bpd.zips,proj4string(bpd.districts))
+
+setwd("~/Documents/Baltimore Geometries/Council_District/")
+bpd.council <- readOGR(dsn=getwd(),layer="Council_District")
+bpd.council <- spTransform(bpd.council,proj4string(bpd.districts))
+
+options(digits=12)
+bpd$lon <- as.numeric(substr(as.character(bpd$Location.1),20,36))
+bpd$lat <- as.numeric(substr(as.character(bpd$Location.1),2,17))
+bpd.no.na <- bpd[which(!is.na(bpd$lon) & !is.na(bpd$lat)),]
+bpd.coords <- bpd.no.na[,c("lon","lat")]
+coordinates(bpd.coords) <- ~ lon + lat
+proj4string(bpd.coords) <- proj4string(bpd.districts)
+bpd.coords.data <- data.frame(bpd.coords,bpd.no.na[,c("ArrestDate", "yymm", "Charge", "Race",
+                                                      "Sex", "Age", "yymmdd")])
+
+bpd.coords.district <- over(bpd.coords,bpd.districts)
+bpd.coords.zip <- over(bpd.coords,bpd.zips)
+bpd.coords.council <- over(bpd.coords,bpd.council)
+bpd.coords.hood <- over(bpd.coords,bpd.hoods)
+
+## District quantile and colors
+district.counts <- as.data.frame(table(bpd.coords.district$Dist_Name))
+district.counts$qtile <- NA
+cuts <- 4
+quantiles <- quantile(district.counts$Freq,probs=seq(0,1,(1/cuts)))
+for (i in seq_along(quantiles)[1:length(quantiles)-1]) {
+    q1 <- quantiles[i]
+    q2 <- quantiles[i+1]
+    district.counts$qtile[which(district.counts$Freq >= q1 &
+                            district.counts$Freq <= q2)] <- i
+}
+names(district.counts)[1] <- "Dist_Name"
+colors <- brewer.pal(cuts,"Reds")
+bpd.districts@data <- bpd.districts@data[,!(names(bpd.districts@data)) %in% c("Freq","qtile")]
+bpd.districts@data <- plyr::join(bpd.districts@data, district.counts, by="Dist_Name")
+bpd.districts@data$color <- colors[bpd.districts@data$qtile]
+plot(bpd.districts,col=bpd.districts@data$color)
+
+writeOGR(bpd.districts,"/Users/quinnhood/Documents/d3Baltimore/districts.geojson",
+         layer="districts",driver="GeoJSON")
+
+## Neighbohood quanitle and colors
+hood.counts <- as.data.frame(table(bpd.coords.hood$Name))
+hood.counts$qtile <- NA
+cuts <- 9
+quantiles <- quantile(hood.counts$Freq,probs=seq(0,1,(1/cuts)))
+for (i in seq_along(quantiles)[1:length(quantiles)-1]) {
+    q1 <- quantiles[i]
+    q2 <- quantiles[i+1]
+    hood.counts$qtile[which(hood.counts$Freq >= q1 &
+                            hood.counts$Freq <= q2)] <- i
+}
+names(hood.counts)[1] <- "Name"
+colors <- brewer.pal(cuts,"Reds")
+bpd.hoods@data <- bpd.hoods@data[,!(names(bpd.hoods@data)) %in% c("Freq","qtile")]
+bpd.hoods@data <- plyr::join(bpd.hoods@data, hood.counts, by="Name")
+bpd.hoods@data$color <- colors[bpd.hoods@data$qtile]
+plot(bpd.hoods,col=bpd.hoods@data$color)
+
+writeOGR(bpd.hoods,"/Users/quinnhood/Documents/d3Baltimore/hoods.geojson",
+         layer="hoods",driver="GeoJSON")
+
+## Zipcode quantile and colors
+zip.counts <- as.data.frame(table(bpd.coords.zip$ZIPCODE1))
+zip.counts$qtile <- NA
+cuts <- 5
+quantiles <- quantile(zip.counts$Freq,probs=seq(0,1,(1/cuts)))
+for (i in seq_along(quantiles)[1:length(quantiles)-1]) {
+    q1 <- quantiles[i]
+    q2 <- quantiles[i+1]
+    zip.counts$qtile[which(zip.counts$Freq >= q1 &
+                            zip.counts$Freq <= q2)] <- i
+}
+names(zip.counts)[1] <- "ZIPCODE1"
+colors <- brewer.pal(cuts,"Reds")
+bpd.zips@data <- bpd.zips@data[,!(names(bpd.zips@data)) %in% c("Freq","qtile")]
+bpd.zips@data <- plyr::join(bpd.zips@data, zip.counts, by="ZIPCODE1")
+bpd.zips@data$color <- colors[bpd.zips@data$qtile]
+plot(bpd.zips,col=bpd.zips@data$color)
+
+writeOGR(bpd.zips,"/Users/quinnhood/Documents/d3Baltimore/zips.geojson",
+         layer="zips",driver="GeoJSON")
+
+## Council district quantile and colors
+council.counts <- as.data.frame(table(bpd.coords.council$OBJECTID))
+council.counts$qtile <- NA
+cuts <- 5
+quantiles <- quantile(council.counts$Freq,probs=seq(0,1,(1/cuts)))
+for (i in seq_along(quantiles)[1:length(quantiles)-1]) {
+    q1 <- quantiles[i]
+    q2 <- quantiles[i+1]
+    council.counts$qtile[which(council.counts$Freq >= q1 &
+                            council.counts$Freq <= q2)] <- i
+}
+names(council.counts)[1] <- "OBJECTID"
+colors <- brewer.pal(cuts,"Reds")
+bpd.council@data <- bpd.council@data[,!(names(bpd.council@data)) %in% c("Freq","qtile")]
+bpd.council@data <- plyr::join(bpd.council@data, council.counts, by="OBJECTID")
+bpd.council@data$color <- colors[bpd.council@data$qtile]
+plot(bpd.council,col=bpd.council@data$color)
+
+writeOGR(bpd.council,"/Users/quinnhood/Documents/d3Baltimore/councils.geojson",
+         layer="councils",driver="GeoJSON")
+
+arrests <- data.frame(bpd.coords,"council"=bpd.coords.council$OBJECTID,"district"=bpd.coords.district$Dist_Name,"zip"=bpd.coords.zip$ZIPCODE1,"hood"=bpd.coords.hood$Name)
+coordinates(arrests) <- ~ lon + lat
+writeOGR(arrests,dsn="/Users/quinnhood/Documents/d3Baltimore/arrests.geojson",layer="arrests",driver="GeoJSON")
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Testing
+southern <- bpd.districts[which(bpd.districts$Dist_Name == "Southern"),]
+southern.points <- bpd.coords.data[which(bpd.coords.district$Dist_Name == "Southern"),]
+for (d in dates) {
+    plot(southern,main=d)
+    points(southern.points[which(southern.points$yymm == d),],
+           col=southern.points[which(southern.points$yymm == d),"Race"])
+    Sys.sleep(1)
+}
+
+plot_arrests <- function(district,dateStart,dateStop) {
+    district.df <- bpd.districts[which(bpd.districts$Dist_Name == district),]
+    district.points <- bpd.coords.data[which(bpd.coords.district$Dist_Name == district &
+                                             as.numeric(bpd.coords.data$yymmdd) >= dateStart &
+                                             as.numeric(bpd.coords.data$yymmdd) <= dateStop),]
+    print(nrow(district.points))
+    plot(district.df)
+    points(district.points,col=district.points$Race)
+}
+
